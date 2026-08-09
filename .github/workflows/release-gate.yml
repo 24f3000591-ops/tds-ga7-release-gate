@@ -1,0 +1,89 @@
+name: TDS GA7 Release Gate
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  packages: write
+  id-token: none
+
+jobs:
+  release-gate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: TDS identity: 24f3000591@ds.study.iitm.ac.in
+        run: echo "TDS identity: 24f3000591@ds.study.iitm.ac.in"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install fastapi uvicorn httpx
+
+      - name: Start release gate
+        run: |
+          uvicorn app:app --host 127.0.0.1 --port 8000 &
+          sleep 3
+
+      - name: Test safe release
+        run: |
+          python - <<'PY'
+          import httpx
+
+          payload = {
+              "target": "preview",
+              "event": "pull_request",
+              "ref": "refs/heads/feature/test",
+              "workflow": {
+                  "trigger": "pull_request",
+                  "permissions": {
+                      "contents": "read",
+                      "packages": "write",
+                      "id-token": "none"
+                  },
+                  "testsPassed": True,
+                  "matrixComplete": True,
+                  "failFast": False,
+                  "actions": [
+                      {
+                          "owner": "actions",
+                          "name": "checkout",
+                          "ref": "v4"
+                      },
+                      {
+                          "owner": "docker",
+                          "name": "build-push-action",
+                          "ref": "0123456789abcdef0123456789abcdef01234567"
+                      }
+                  ]
+              },
+              "image": {
+                  "multiStage": True,
+                  "runsAsRoot": False,
+                  "secretMode": "none",
+                  "criticalVulnerabilities": 0,
+                  "digestPinned": True
+              }
+          }
+
+          r = httpx.post(
+              "http://127.0.0.1:8000/release-gate",
+              json=payload
+          )
+
+          print(r.json())
+
+          assert r.status_code == 200
+          assert r.json()["decision"] == "promote"
+          assert r.json()["violations"] == []
+          PY
